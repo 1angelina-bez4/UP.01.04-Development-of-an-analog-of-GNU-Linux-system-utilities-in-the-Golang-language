@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"runtime"
-	"os"
 )
 
 type ArchInfo struct {
@@ -17,10 +16,10 @@ type ArchInfo struct {
 func main() {
 	// Определение флагов
 	var (
-		help     = flag.Bool("h", false, "показать справку")
-		long     = flag.Bool("l", false, "подробный вывод")
-		json     = flag.Bool("json", false, "вывод в формате JSON")
-		all      = flag.Bool("a", false, "показать всю информацию")
+		help = flag.Bool("h", false, "показать справку")
+		long = flag.Bool("l", false, "подробный вывод")
+		json = flag.Bool("json", false, "вывод в формате JSON")
+		all  = flag.Bool("a", false, "показать всю информацию")
 	)
 	flag.Parse()
 
@@ -35,10 +34,10 @@ func main() {
 	}
 
 	info := ArchInfo{
-		Arch:      runtime.GOARCH,
-		OS:        runtime.GOOS,
-		CPUCores:  runtime.NumCPU(),
-		GoVersion: runtime.Version(),
+		Arch:      runtime.GOARCH,    //архитектура процессора
+		OS:        runtime.GOOS,      //операционная система
+		CPUCores:  runtime.NumCPU(),  //количество ядер процессора
+		GoVersion: runtime.Version(), //версия гоу
 	}
 
 	// Вывод в зависимости от флагов
