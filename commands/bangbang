@@ -1,0 +1,217 @@
+package main
+
+////bangbang
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
+// История команд хранится в файле
+const historyFile = ".shell_history"
+
+func main() {
+	// Определение флагов (3 аргумента + -h)
+	var (
+		help    = flag.Bool("h", false, "показать справку")
+		list    = flag.Bool("l", false, "показать последнюю команду без выполнения")
+		clear   = flag.Bool("c", false, "очистить историю")
+		confirm = flag.Bool("y", false, "выполнить без подтверждения")
+	)
+	flag.Parse()
+
+	// Обработка справки
+	if *help {
+		printHelp()
+		return
+	}
+
+	// Очистка истории
+	if *clear {
+		if err := clearHistory(); err != nil {
+			fmt.Fprintf(os.Stderr, "!!: ошибка очистки истории: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("История команд очищена")
+		return
+	}
+
+	// Получаем последнюю команду
+	lastCmd, err := getLastCommand()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "!!: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Проверка на пустую историю
+	if lastCmd == "" {
+		fmt.Fprintln(os.Stderr, "!!: нет команд в истории")
+		os.Exit(1)
+	}
+
+	// Только показать команду без выполнения
+	if *list {
+		fmt.Printf("Последняя команда: %s\n", lastCmd)
+		return
+	}
+
+	// Запрос подтверждения
+	if !*confirm {
+		fmt.Printf("Выполнить '%s'? (y/n): ", lastCmd)
+		var response string
+		fmt.Scanln(&response)
+		if response != "y" && response != "Y" {
+			fmt.Println("Отменено")
+			return
+		}
+	}
+
+	// Выполняем команду
+	fmt.Printf("Выполняется: %s\n", lastCmd)
+	if err := executeCommand(lastCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "!!: ошибка выполнения: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// printHelp выводит справку
+func printHelp() {
+	fmt.Println("!! - повторить последнюю команду")
+	fmt.Println("")
+	fmt.Println("Использование:")
+	fmt.Println("  !!              - выполнить последнюю команду")
+	fmt.Println("  !! -l           - показать последнюю команду без выполнения")
+	fmt.Println("  !! -c           - очистить историю команд")
+	fmt.Println("  !! -y           - выполнить без подтверждения")
+	fmt.Println("  !! -h           - показать эту справку")
+	fmt.Println("")
+	fmt.Println("Примеры:")
+	fmt.Println("  $ ls -la")
+	fmt.Println("  $ !!            # выполнит ls -la снова")
+	fmt.Println("  $ !! -l         # покажет 'ls -la'")
+	fmt.Println("  $ !! -y         # выполнит сразу без вопроса")
+}
+
+// getLastCommand возвращает последнюю команду из истории
+func getLastCommand() (string, error) {
+	historyPath, err := getHistoryPath()
+	if err != nil {
+		return "", err
+	}
+
+	// Проверяем существование файла
+	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("история пуста")
+	}
+
+	// Открываем файл истории
+	file, err := os.Open(historyPath)
+	if err != nil {
+		return "", fmt.Errorf("не удалось открыть историю: %v", err)
+	}
+	defer file.Close()
+
+	// Читаем файл построчно и находим последнюю непустую строку
+	scanner := bufio.NewScanner(file)
+	var lastLine string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lastLine = line
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("ошибка чтения истории: %v", err)
+	}
+
+	if lastLine == "" {
+		return "", fmt.Errorf("нет команд в истории")
+	}
+
+	return lastLine, nil
+}
+
+// clearHistory очищает файл истории
+func clearHistory() error {
+	historyPath, err := getHistoryPath()
+	if err != nil {
+		return err
+	}
+
+	// Создаём или очищаем файл
+	file, err := os.Create(historyPath)
+	if err != nil {
+		return fmt.Errorf("не удалось очистить историю: %v", err)
+	}
+	defer file.Close()
+
+	return nil
+}
+
+// getHistoryPath возвращает путь к файлу истории
+func getHistoryPath() (string, error) {
+	// Пробуем получить домашнюю директорию
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Если не получилось, используем текущую директорию
+		return filepath.Join(".", historyFile), nil
+	}
+	return filepath.Join(home, historyFile), nil
+}
+
+// executeCommand выполняет команду
+func executeCommand(cmdStr string) error {
+	// Разбиваем команду на части
+	parts := strings.Fields(cmdStr)
+	if len(parts) == 0 {
+		return fmt.Errorf("пустая команда")
+	}
+
+	// Ищем исполняемый файл
+	cmdPath, err := findCommand(parts[0])
+	if err != nil {
+		return err
+	}
+
+	// Создаём процесс
+	cmd := exec.Command(cmdPath, parts[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Запускаем и ждём завершения
+	return cmd.Run()
+}
+
+// findCommand ищет команду в PATH
+func findCommand(cmdName string) (string, error) {
+	// Проверяем абсолютный путь
+	if strings.Contains(cmdName, "/") {
+		if _, err := os.Stat(cmdName); err == nil {
+			return cmdName, nil
+		}
+	}
+
+	// Поиск в PATH
+	pathEnv := os.Getenv("PATH")
+	paths := strings.Split(pathEnv, string(os.PathListSeparator))
+
+	for _, p := range paths {
+		fullPath := filepath.Join(p, cmdName)
+		if runtime.GOOS == "windows" {
+			fullPath += ".exe"
+		}
+		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+			return fullPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("команда не найдена: %s", cmdName)
+}
