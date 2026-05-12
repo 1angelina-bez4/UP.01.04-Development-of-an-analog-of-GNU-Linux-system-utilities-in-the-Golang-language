@@ -1,0 +1,248 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+)
+
+// История команд хранится в файле
+const historyFile = ".shell_history"
+
+// Структура для хранения команды с номером
+type HistoryEntry struct {
+	Number  int
+	Command string
+}
+
+func main() {
+	// Определение флагов (3 аргумента + -h)
+	var (
+		help    = flag.Bool("h", false, "показать справку")
+		list    = flag.Bool("l", false, "показать команду без выполнения")
+		confirm = flag.Bool("y", false, "выполнить без подтверждения")
+		offset  = flag.Int("o", 0, "смещение от конца (например -o 1 = предпоследняя)")
+	)
+	flag.Parse()
+
+	// Обработка справки
+	if *help {
+		printHelp()
+		return
+	}
+
+	// Проверка наличия аргумента с номером
+	if flag.NArg() == 0 && *offset == 0 {
+		fmt.Fprintln(os.Stderr, "!n: нужно указать номер команды или смещение")
+		fmt.Fprintln(os.Stderr, "Примеры: !5, !-1, !-o 2")
+		os.Exit(1)
+	}
+
+	// Получаем историю
+	history, err := loadHistory()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "!n: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(history) == 0 {
+		fmt.Fprintln(os.Stderr, "!n: история пуста")
+		os.Exit(1)
+	}
+
+	// Определяем номер команды
+	var num int
+	var targetCmd string
+
+	if *offset > 0 {
+		// Смещение от конца: -o 1 = предпоследняя
+		if *offset > len(history) {
+			fmt.Fprintf(os.Stderr, "!n: смещение %d превышает размер истории (%d)\n", *offset, len(history))
+			os.Exit(1)
+		}
+		num = len(history) - *offset + 1
+		targetCmd = history[num-1].Command
+	} else if flag.NArg() > 0 {
+		// Прямое указание номера
+		var err error
+		num, err = strconv.Atoi(flag.Arg(0))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "!n: неверный номер команды '%s'\n", flag.Arg(0))
+			os.Exit(1)
+		}
+
+		// Проверка на отрицательное число (как в bash: !-1 = последняя)
+		if num < 0 {
+			absNum := -num
+			if absNum > len(history) {
+				fmt.Fprintf(os.Stderr, "!n: команда !-%d не найдена (всего %d команд)\n", absNum, len(history))
+				os.Exit(1)
+			}
+			targetCmd = history[len(history)-absNum].Command
+			num = len(history) - absNum + 1
+		} else {
+			// Положительное число - прямой номер
+			if num < 1 || num > len(history) {
+				fmt.Fprintf(os.Stderr, "!n: команда с номером %d не найдена (всего %d команд)\n", num, len(history))
+				os.Exit(1)
+			}
+			targetCmd = history[num-1].Command
+		}
+	}
+
+	// Только показать команду без выполнения
+	if *list {
+		fmt.Printf("Команда #%d: %s\n", num, targetCmd)
+		return
+	}
+
+	// Запрос подтверждения
+	if !*confirm {
+		fmt.Printf("Выполнить '%s'? (y/n): ", targetCmd)
+		var response string
+		fmt.Scanln(&response)
+		if response != "y" && response != "Y" {
+			fmt.Println("Отменено")
+			return
+		}
+	}
+
+	// Выполняем команду
+	fmt.Printf("Выполняется: %s\n", targetCmd)
+	if err := executeCommand(targetCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "!n: ошибка выполнения: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// printHelp выводит справку
+func printHelp() {
+	fmt.Println("!n - выполнить команду под номером n из истории")
+	fmt.Println("")
+	fmt.Println("Использование:")
+	fmt.Println("  !n              - выполнить команду с номером n")
+	fmt.Println("  !-n             - выполнить команду за n шагов от конца")
+	fmt.Println("  !n -l           - показать команду без выполнения")
+	fmt.Println("  !n -y           - выполнить без подтверждения")
+	fmt.Println("  !n -o смещение  - выполнить команду со смещением от конца")
+	fmt.Println("  !n -h           - показать эту справку")
+	fmt.Println("")
+	fmt.Println("Примеры:")
+	fmt.Println("  $ history")
+	fmt.Println("    1  ls -la")
+	fmt.Println("    2  cd /tmp")
+	fmt.Println("    3  pwd")
+	fmt.Println("  $ !2            # выполнит 'cd /tmp'")
+	fmt.Println("  $ !-1           # выполнит последнюю команду 'pwd'")
+	fmt.Println("  $ !-2           # выполнит предпоследнюю команду 'cd /tmp'")
+	fmt.Println("  $ !3 -l         # покажет 'pwd' без выполнения")
+}
+
+// loadHistory загружает историю из файла
+func loadHistory() ([]HistoryEntry, error) {
+	historyPath, err := getHistoryPath()
+	if err != nil {
+		return nil, err
+	}
+
+	// Проверяем существование файла
+	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
+		return []HistoryEntry{}, nil
+	}
+
+	// Открываем файл
+	file, err := os.Open(historyPath)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось открыть историю: %v", err)
+	}
+	defer file.Close()
+
+	// Читаем историю
+	var history []HistoryEntry
+	scanner := bufio.NewScanner(file)
+	lineNum := 1
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			history = append(history, HistoryEntry{
+				Number:  lineNum,
+				Command: line,
+			})
+			lineNum++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения истории: %v", err)
+	}
+
+	return history, nil
+}
+
+// getHistoryPath возвращает путь к файлу истории
+func getHistoryPath() (string, error) {
+	// Пробуем получить домашнюю директорию
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Если не получилось, используем текущую директорию
+		return filepath.Join(".", historyFile), nil
+	}
+	return filepath.Join(home, historyFile), nil
+}
+
+// executeCommand выполняет команду
+func executeCommand(cmdStr string) error {
+	// Разбиваем команду на части
+	parts := strings.Fields(cmdStr)
+	if len(parts) == 0 {
+		return fmt.Errorf("пустая команда")
+	}
+
+	// Ищем исполняемый файл
+	cmdPath, err := findCommand(parts[0])
+	if err != nil {
+		return err
+	}
+
+	// Создаём процесс
+	cmd := exec.Command(cmdPath, parts[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Запускаем и ждём завершения
+	return cmd.Run()
+}
+
+// findCommand ищет команду в PATH
+func findCommand(cmdName string) (string, error) {
+	// Проверяем абсолютный путь
+	if strings.Contains(cmdName, "/") {
+		if _, err := os.Stat(cmdName); err == nil {
+			return cmdName, nil
+		}
+	}
+
+	// Поиск в PATH
+	pathEnv := os.Getenv("PATH")
+	paths := strings.Split(pathEnv, string(os.PathListSeparator))
+
+	for _, p := range paths {
+		fullPath := filepath.Join(p, cmdName)
+		if runtime.GOOS == "windows" {
+			fullPath += ".exe"
+		}
+		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+			return fullPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("команда не найдена: %s", cmdName)
+}
