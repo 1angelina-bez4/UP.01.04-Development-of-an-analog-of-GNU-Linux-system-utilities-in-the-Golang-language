@@ -4,20 +4,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 type FindOptions struct {
-	Name      string
-	Type      string
-	Size      string
-	MaxDepth  int
-	Exec      string
+	Name     string
+	Type     string
+	Size     string
+	MaxDepth int
+	Exec     string
 }
 
 func main() {
-	// Определение флагов
 	var (
 		help     = flag.Bool("h", false, "показать справку")
 		name     = flag.String("name", "", "имя файла (возможен шаблон)")
@@ -28,22 +28,16 @@ func main() {
 	)
 	flag.Parse()
 
-	// Обработка справки
 	if *help {
 		fmt.Println("find - поиск файлов")
 		fmt.Println("Использование: find [путь] [-name шаблон] [-type тип] [-size размер] [-maxdepth глубина] [-exec команда]")
-		fmt.Println("  -name      имя файла (поддерживает * и ?)")
-		fmt.Println("  -type      тип: f (файл), d (директория)")
-		fmt.Println("  -size      размер: +10M, -1G, 500k (b, k, M, G)")
-		fmt.Println("  -maxdepth  максимальная глубина поиска")
-		fmt.Println("  -exec      выполнить команду ({} заменяется на путь к файлу)")
 		return
 	}
 
-	// Определяем путь для поиска
-	path := "."
+	// Путь поиска
+	root := "."
 	if flag.NArg() > 0 {
-		path = flag.Arg(0)
+		root = flag.Arg(0)
 	}
 
 	opts := FindOptions{
@@ -54,15 +48,21 @@ func main() {
 		Exec:     *exec,
 	}
 
-	// Выполняем поиск
-	err := filepath.Walk(path, func(currentPath string, info os.FileInfo, err error) error {
+	// Нормализуем путь
+	root, _ = filepath.Abs(root)
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // пропускаем ошибки доступа
+			return nil // пропускаем ошибки
 		}
 
-		// Проверяем глубину
+		// Вычисляем глубину
 		if opts.MaxDepth >= 0 {
-			depth := strings.Count(currentPath[len(path):], string(os.PathSeparator))
+			relPath, _ := filepath.Rel(root, path)
+			depth := 0
+			if relPath != "." {
+				depth = strings.Count(relPath, string(os.PathSeparator)) + 1
+			}
 			if depth > opts.MaxDepth {
 				if info.IsDir() {
 					return filepath.SkipDir
@@ -71,12 +71,7 @@ func main() {
 			}
 		}
 
-		// Пропускаем сам начальный путь
-		if currentPath == path {
-			return nil
-		}
-
-		// Проверка типа файла
+		// Проверяем тип
 		if opts.Type != "" {
 			switch opts.Type {
 			case "f":
@@ -92,7 +87,7 @@ func main() {
 			}
 		}
 
-		// Проверка имени файла
+		// Проверяем имя
 		if opts.Name != "" {
 			matched, err := filepath.Match(opts.Name, info.Name())
 			if err != nil || !matched {
@@ -100,18 +95,18 @@ func main() {
 			}
 		}
 
-		// Проверка размера
+		// Проверяем размер
 		if opts.Size != "" {
 			if !checkSize(info.Size(), opts.Size) {
 				return nil
 			}
 		}
 
-		// Вывод результата
+		// Выводим результат
 		if opts.Exec != "" {
-			executeCommand(opts.Exec, currentPath)
+			executeCommand(opts.Exec, path)
 		} else {
-			fmt.Println(currentPath)
+			fmt.Println(path)
 		}
 
 		return nil
@@ -119,65 +114,66 @@ func main() {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "find: %v\n", err)
-		os.Exit(1)
 	}
 }
 
-// checkSize проверяет, соответствует ли размер файла условию
-func checkSize(fileSize int64, sizePattern string) bool {
+func checkSize(fileSize int64, pattern string) bool {
 	var multiplier int64 = 1
-	var compareOp string
-	
-	// Определяем оператор сравнения
-	if strings.HasPrefix(sizePattern, "+") {
-		compareOp = ">"
-		sizePattern = sizePattern[1:]
-	} else if strings.HasPrefix(sizePattern, "-") {
-		compareOp = "<"
-		sizePattern = sizePattern[1:]
+	var op string
+
+	if strings.HasPrefix(pattern, "+") {
+		op = ">"
+		pattern = pattern[1:]
+	} else if strings.HasPrefix(pattern, "-") {
+		op = "<"
+		pattern = pattern[1:]
 	} else {
-		compareOp = "="
+		op = "="
 	}
-	
-	// Определяем множитель
-	if strings.HasSuffix(sizePattern, "b") {
+
+	if strings.HasSuffix(pattern, "b") {
 		multiplier = 1
-		sizePattern = sizePattern[:len(sizePattern)-1]
-	} else if strings.HasSuffix(sizePattern, "k") {
+		pattern = pattern[:len(pattern)-1]
+	} else if strings.HasSuffix(pattern, "k") {
 		multiplier = 1024
-		sizePattern = sizePattern[:len(sizePattern)-1]
-	} else if strings.HasSuffix(sizePattern, "M") {
+		pattern = pattern[:len(pattern)-1]
+	} else if strings.HasSuffix(pattern, "M") {
 		multiplier = 1024 * 1024
-		sizePattern = sizePattern[:len(sizePattern)-1]
-	} else if strings.HasSuffix(sizePattern, "G") {
+		pattern = pattern[:len(pattern)-1]
+	} else if strings.HasSuffix(pattern, "G") {
 		multiplier = 1024 * 1024 * 1024
-		sizePattern = sizePattern[:len(sizePattern)-1]
+		pattern = pattern[:len(pattern)-1]
 	}
-	
-	var targetSize int64
-	fmt.Sscanf(sizePattern, "%d", &targetSize)
-	targetSize *= multiplier
-	
-	switch compareOp {
+
+	var size int64
+	fmt.Sscanf(pattern, "%d", &size)
+	size *= multiplier
+
+	switch op {
 	case ">":
-		return fileSize > targetSize
+		return fileSize > size
 	case "<":
-		return fileSize < targetSize
+		return fileSize < size
 	default:
-		return fileSize == targetSize
+		return fileSize == size
 	}
 }
 
-// executeCommand выполняет команду для найденного файла
 func executeCommand(command, filePath string) {
-	// Заменяем {} на путь к файлу
 	cmdStr := strings.ReplaceAll(command, "{}", filePath)
-	
-	// Простой вывод команды (в реальной оболочке нужно выполнять)
-	fmt.Printf("Выполнение: %s\n", cmdStr)
-	
-	// Здесь можно добавить реальное выполнение команды
-	// parts := strings.Fields(cmdStr)
-	// cmd := exec.Command(parts[0], parts[1:]...)
-	// cmd.Run()
+
+	// Разбиваем команду на части
+	parts := strings.Fields(cmdStr)
+	if len(parts) == 0 {
+		return
+	}
+
+	// Выполняем команду
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "find: ошибка выполнения '%s': %v\n", cmdStr, err)
+	}
 }
