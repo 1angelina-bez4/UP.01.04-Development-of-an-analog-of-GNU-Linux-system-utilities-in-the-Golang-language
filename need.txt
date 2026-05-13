@@ -1,3 +1,16 @@
+исправить: cp, file,find( ошибок нет, но надо исправить поиск),
+free( ошибок нет, но нет swap как в утилите linux + расхождение в числах),
+hexdump, history( ошибок нет, но надо исправить вывод истории и ее выполение),zip, unzip, bangbang( ошибок нет, но не правильная работа с историей), bangn(  проблема как и в bangbang)
+
+
+( стоит перепроверить)
+выполняемые команды через run без ошибок:
+arch, cat, cd, clear, mkdir, pwd, date,
+df, du, head, ls, nl, ps(более подробно чем просто ps),
+pwgen, rm, rmdir,tail,tar,uname,wc
+
+
+
 .PHONY: build run clean help
 
 GREEN := \033[0;32m
@@ -604,3 +617,5 @@ Go Shell (gshell) - Оболочка для запуска утилит
   gshell -c "pwd"
 `)
 }
+
+
