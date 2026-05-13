@@ -1,0 +1,13 @@
+ФАЙЛ С ОШИБКАМИ 
+Для испарвления
+
+ультилита hexdump
+[user@localhost hexdump]$ go run main.go 
+# command-line-arguments
+./main.go:69:23: undefined: io.File
+
+ультилита zip
+go run main.go -l mur
+# command-line-arguments
+./main.go:105:6: syntax error: unexpected name addToZip, expected (
+./main.go:173:6: syntax error: unexpected name shouldExclude, expected (
