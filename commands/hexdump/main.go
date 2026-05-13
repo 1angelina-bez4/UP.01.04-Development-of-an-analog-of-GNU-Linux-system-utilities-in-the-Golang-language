@@ -66,7 +66,7 @@ func main() {
 }
 
 // dumpHex выводит шестнадцатеричный дамп
-func dumpHex(file *io.File, opts HexOptions) {
+func dumpHex(file *os.File, opts HexOptions) {
 	// Устанавливаем смещение
 	if opts.Offset > 0 {
 		file.Seek(opts.Offset, io.SeekStart)
@@ -117,19 +117,17 @@ func printCanonical(data []byte, offset int64) {
 	// Вывод шестнадцатеричных байт
 	for i, b := range data {
 		fmt.Printf("%02x", b)
-		if (i+1)%8 == 0 {
-			fmt.Print(" ")
-		}
-		if (i+1)%16 == 0 && i+1 < len(data) {
+		if (i+1)%8 == 0 && i+1 < len(data) {
 			fmt.Print(" ")
 		}
 	}
 
-	// Выравнивание
+	// Выравнивание для канонического формата (16 байт на строку)
 	bytesPerLine := 16
 	if len(data) < bytesPerLine {
+		// Вычисляем сколько пробелов нужно для выравнивания
 		spaces := (bytesPerLine - len(data)) * 3
-		if (bytesPerLine - len(data)) > 8 {
+		if len(data) <= 8 && bytesPerLine-len(data) > 8 {
 			spaces += 1
 		}
 		for i := 0; i < spaces; i++ {
