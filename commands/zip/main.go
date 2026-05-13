@@ -10,171 +10,97 @@ import (
 	"strings"
 )
 
-// ZipOptions хранит опции архивации
-type ZipOptions struct {
-	Recursive   bool
-	Compression int
-	Quiet       bool
-	Exclude     []string
-}
-
 func main() {
-	// Определение флагов
-	var (
-		help       = flag.Bool("h", false, "показать справку")
-		recursive  = flag.Bool("r", false, "рекурсивное добавление")
-		level      = flag.Int("l", 6, "уровень сжатия (0-9)")
-		quiet      = flag.Bool("q", false, "не выводить информацию")
-		exclude    = flag.String("x", "", "исключить файлы (через запятую)")
-	)
+	r := flag.Bool("r", false, "рекурсивно")
+	l := flag.Int("l", 6, "сжатие 0-9")
+	q := flag.Bool("q", false, "тихо")
+	x := flag.String("x", "", "исключить")
+	L := flag.Bool("L", false, "список")
 	flag.Parse()
 
-	// Обработка справки
-	if *help {
-		fmt.Println("zip - создание ZIP архива")
-		fmt.Println("Использование: zip [-r] [-l уровень] [-x шаблон] архив.zip файлы...")
-		fmt.Println("  -r      рекурсивно добавлять директории")
-		fmt.Println("  -l      уровень сжатия (0-9)")
-		fmt.Println("  -q      тихий режим")
-		fmt.Println("  -x      исключить файлы (шаблоны через запятую)")
+	if *L {
+		list(flag.Arg(0))
 		return
 	}
 
-	// Проверка уровня сжатия
-	if *level < 0 || *level > 9 {
-		fmt.Fprintln(os.Stderr, "zip: уровень сжатия должен быть от 0 до 9")
-		os.Exit(1)
-	}
-
-	// Проверка наличия аргументов
 	if flag.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "zip: нужно указать архив и файлы")
+		fmt.Fprintln(os.Stderr, "zip: нужен архив и файлы")
 		os.Exit(1)
 	}
 
-	// Парсим исключения
-	excludeList := []string{}
-	if *exclude != "" {
-		excludeList = strings.Split(*exclude, ",")
+	zipName, files := flag.Arg(0), flag.Args()[1:]
+	excludes := strings.Split(*x, ",")
+
+	// Создаем архив
+	f, _ := os.Create(zipName)
+	defer f.Close()
+	w := zip.NewWriter(f)
+	defer w.Close()
+
+	for _, file := range files {
+		add(w, file, "", *r, *l, *q, excludes)
 	}
-
-	options := ZipOptions{
-		Recursive:   *recursive,
-		Compression: *level,
-		Quiet:       *quiet,
-		Exclude:     excludeList,
-	}
-
-	zipName := flag.Arg(0)
-	files := flag.Args()[1:]
-
-	// Создаём ZIP архив
-	if err := createZip(zipName, files, options); err != nil {
-		fmt.Fprintf(os.Stderr, "zip: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !options.Quiet {
-		fmt.Printf("zip: создан архив '%s'\n", zipName)
+	if !*q {
+		fmt.Printf("zip: создан %s\n", zipName)
 	}
 }
 
-// createZip создаёт ZIP архив
-func createZip(zipName string, files []string, opts ZipOptions) error {
-	// Создаём файл архива
-	zipFile, err := os.Create(zipName)
-	if err != nil {
-		return err
-		defer zipFile.Close()
-
-	// Создаём ZIP writer
-	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
-
-	// Добавляем файлы в архив
-	for _, fname := range files {
-		if err := addToZip(zipWriter, fname, "", opts); err != nil {
-			return fmt.Errorf("ошибка добавления %s: %v", fname, err)
+func add(w *zip.Writer, path, base string, rec bool, lvl int, quiet bool, exclude []string) {
+	// Проверка исключения
+	for _, pat := range exclude {
+		if ok, _ := filepath.Match(pat, filepath.Base(path)); ok {
+			return
 		}
-	}
-
-	return nil
-}
-
-// addToZip добавляет файл или директорию в ZIP архив
-func addToZip(zipWriter *zip.Writer, path, basePath string, opts ZipOptions) error {
-	// Проверяем, нужно ли исключить файл
-	if shouldExclude(path, opts.Exclude) {
-		if !opts.Quiet {
-			fmt.Printf("zip: исключён '%s'\n", path)
-		}
-		return nil
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return err
+		return
 	}
 
-	// Обработка директории
 	if info.IsDir() {
-		if !opts.Recursive {
-			return fmt.Errorf("'%s' - директория, используйте -r", path)
+		if !rec {
+			fmt.Fprintf(os.Stderr, "zip: %s - директория, нужен -r\n", path)
+			return
 		}
-		
-		// Рекурсивно обходим директорию
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
+		entries, _ := os.ReadDir(path)
+		for _, e := range entries {
+			add(w, filepath.Join(path, e.Name()), filepath.Join(base, e.Name()), rec, lvl, quiet, exclude)
 		}
-		
-		for _, entry := range entries {
-			newPath := filepath.Join(path, entry.Name())
-			newBase := filepath.Join(basePath, entry.Name())
-			if err := addToZip(zipWriter, newPath, newBase, opts); err != nil {
-				return err
-			}
-		}
-		return nil
+		return
 	}
 
 	// Добавляем файл
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
+	file, _ := os.Open(path)
 	defer file.Close()
 
-	// Определяем имя в архиве
-	zipPath := basePath
-	if zipPath == "" {
-		zipPath = filepath.Base(path)
+	// Заголовок
+	header := &zip.FileHeader{Name: base, Method: zip.Deflate}
+	if base == "" {
+		header.Name = filepath.Base(path)
+	}
+	if lvl == 0 {
+		header.Method = zip.Store
 	}
 
-	// Создаём запись в архиве
-	writer, err := zipWriter.Create(zipPath)
-	if err != nil {
-		return err
-	}
+	wr, _ := w.CreateHeader(header)
+	io.Copy(wr, file)
 
-	// Копируем содержимое
-	_, err = io.Copy(writer, file)
-	if err != nil {
-		return err
+	if !quiet {
+		fmt.Printf("zip: %s -> %s\n", path, header.Name)
 	}
-
-	if !opts.Quiet {
-		fmt.Printf("zip: добавлен '%s'\n", path)
-	}
-	return nil
 }
 
-// shouldExclude проверяет, нужно ли исключить файл
-func shouldExclude(path string, excludePatterns []string) bool {
-	for _, pattern := range excludePatterns {
-		if matched, _ := filepath.Match(pattern, filepath.Base(path)); matched {
-			return true
-		}
+func list(name string) {
+	r, err := zip.OpenReader(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zip: %v\n", err)
+		return
 	}
-	return false
+	defer r.Close()
+
+	fmt.Printf("Архив: %s\n", name)
+	for _, f := range r.File {
+		fmt.Printf("  %8d  %s\n", f.UncompressedSize64, f.Name)
+	}
 }
