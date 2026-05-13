@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -19,9 +18,9 @@ type FileType struct {
 func main() {
 	// Определение флагов
 	var (
-		help     = flag.Bool("h", false, "показать справку")
-		mime     = flag.Bool("i", false, "вывести MIME-тип")
-		verbose  = flag.Bool("v", false, "подробный вывод")
+		help      = flag.Bool("h", false, "показать справку")
+		mime      = flag.Bool("i", false, "вывести MIME-тип")
+		verbose   = flag.Bool("v", false, "подробный вывод")
 		extension = flag.Bool("e", false, "определять по расширению")
 	)
 	flag.Parse()
@@ -51,7 +50,7 @@ func main() {
 		}
 
 		var fileType FileType
-		
+
 		if info.IsDir() {
 			fileType = FileType{Name: "directory", MimeType: "inode/directory", Description: "директория"}
 		} else if *extension {
@@ -91,9 +90,9 @@ func detectByContent(fname string) FileType {
 
 	// Проверка магических чисел
 	magicSignatures := []struct {
-		magic []byte
+		magic  []byte
 		offset int
-		ftype FileType
+		ftype  FileType
 	}{
 		{[]byte("\x7fELF"), 0, FileType{Name: "elf", MimeType: "application/x-executable", Description: "ELF исполняемый"}},
 		{[]byte("%PDF"), 0, FileType{Name: "pdf", MimeType: "application/pdf", Description: "PDF документ"}},
@@ -117,7 +116,7 @@ func detectByContent(fname string) FileType {
 // detectByExtension определяет тип по расширению файла
 func detectByExtension(fname string) FileType {
 	ext := strings.ToLower(getExtension(fname))
-	
+
 	extMap := map[string]FileType{
 		".txt":  {Name: "text", MimeType: "text/plain", Description: "текстовый файл"},
 		".go":   {Name: "go", MimeType: "text/x-go", Description: "Go исходник"},
@@ -129,7 +128,7 @@ func detectByExtension(fname string) FileType {
 		".png":  {Name: "png", MimeType: "image/png", Description: "PNG изображение"},
 		".pdf":  {Name: "pdf", MimeType: "application/pdf", Description: "PDF документ"},
 	}
-	
+
 	if ft, ok := extMap[ext]; ok {
 		return ft
 	}
