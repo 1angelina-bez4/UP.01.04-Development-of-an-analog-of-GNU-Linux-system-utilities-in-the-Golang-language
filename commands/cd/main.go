@@ -3,91 +3,118 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
 
-// Глобальная переменная для хранения предыдущей директории
-var prevDir string
-
 func main() {
-	// Определение флагов
-	var (
-		help    = flag.Bool("h", false, "показать справку")
-		toPrev  = flag.Bool("prev", false, "перейти в предыдущую директорию (cd -)")
-		verbose = flag.Bool("v", false, "выводить путь после перехода")
-	)
+	// Флаги
+	recursive := flag.Bool("r", false, "рекурсивное копирование")
+	force := flag.Bool("f", false, "принудительное копирование")
+	verbose := flag.Bool("v", false, "подробный вывод")
+	help := flag.Bool("h", false, "справка")
 	flag.Parse()
 
-	// Обработка справки
 	if *help {
-		fmt.Println("cd - смена текущей директории")
-		fmt.Println("Использование: cd [директория]")
-		fmt.Println("  cd -       перейти в предыдущую директорию")
-		fmt.Println("  cd -prev   перейти в предыдущую директорию")
-		fmt.Println("  -v         выводить путь после перехода")
+		fmt.Println("cp [-r] [-f] [-v] источник назначение")
 		return
 	}
 
-	// Получаем текущую директорию
-	current, err := os.Getwd()
+	if flag.NArg() < 2 {
+		fmt.Fprintln(os.Stderr, "cp: нужен источник и назначение")
+		os.Exit(1)
+	}
+
+	args := flag.Args()
+	sources := args[:len(args)-1]
+	dest := args[len(args)-1]
+
+	// Проверяем, директория ли назначение
+	destInfo, _ := os.Stat(dest)
+	isDir := destInfo != nil && destInfo.IsDir()
+
+	// Копируем
+	for _, src := range sources {
+		srcInfo, err := os.Stat(src)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cp: %v\n", err)
+			continue
+		}
+
+		// Определяем путь назначения
+		destPath := dest
+		if isDir {
+			destPath = filepath.Join(dest, filepath.Base(src))
+		}
+
+		// Копируем файл или директорию
+		if srcInfo.IsDir() {
+			if !*recursive {
+				fmt.Fprintf(os.Stderr, "cp: '%s' - директория (нужен -r)\n", src)
+				continue
+			}
+			copyDir(src, destPath, *force, *verbose)
+		} else {
+			copyFile(src, destPath, *force, *verbose)
+		}
+	}
+}
+
+func copyFile(src, dst string, force, verbose bool) error {
+	// Проверяем существование
+	if _, err := os.Stat(dst); err == nil && !force {
+		return fmt.Errorf("'%s' уже существует", dst)
+	}
+
+	// Открываем исходный
+	in, err := os.Open(src)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
-		os.Exit(1)
+		return err
 	}
+	defer in.Close()
 
-	// Обработка перехода в предыдущую директорию
-	if *toPrev || (flag.NArg() > 0 && flag.Arg(0) == "-") {
-		if prevDir == "" {
-			fmt.Fprintln(os.Stderr, "cd: нет предыдущей директории")
-			os.Exit(1)
-		}
-		
-		// Меняем директорию
-		if err := os.Chdir(prevDir); err != nil {
-			fmt.Fprintf(os.Stderr, "cd: %v\n", err)
-			os.Exit(1)
-		}
-		
-		// Обновляем prevDir
-		prevDir = current
-		
-		if *verbose {
-			newDir, _ := os.Getwd()
-			fmt.Println(newDir)
-		}
-		return
-	}
-
-	// Определение целевой директории
-	target := "."
-	if flag.NArg() > 0 {
-		target = flag.Arg(0)
-	}
-
-	// Проверка существования директории
-	info, err := os.Stat(target)
+	// Создаем назначение
+	out, err := os.Create(dst)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-	
-	if !info.IsDir() {
-		fmt.Fprintf(os.Stderr, "cd: %s: не является директорией\n", target)
-		os.Exit(1)
+	defer out.Close()
+
+	// Копируем
+	_, err = io.Copy(out, in)
+	if err == nil && verbose {
+		fmt.Printf("%s -> %s\n", src, dst)
+	}
+	return err
+}
+
+func copyDir(src, dst string, force, verbose bool) error {
+	// Создаем директорию
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
 	}
 
-	// Сохраняем текущую директорию перед переходом
-	prevDir = current
-
-	// Выполняем переход
-	if err := os.Chdir(target); err != nil {
-		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
-		os.Exit(1)
+	// Читаем содержимое
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
 	}
 
-	if *verbose {
-		newDir, _ := os.Getwd()
-		fmt.Println(newDir)
+	// Копируем каждый элемент
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			copyDir(srcPath, dstPath, force, verbose)
+		} else {
+			copyFile(srcPath, dstPath, force, verbose)
+		}
 	}
+
+	if verbose {
+		fmt.Printf("dir: %s -> %s\n", src, dst)
+	}
+	return nil
 }
