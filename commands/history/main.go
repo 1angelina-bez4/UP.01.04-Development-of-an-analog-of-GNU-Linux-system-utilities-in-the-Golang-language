@@ -5,147 +5,194 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
-const historyFile = ".goutils_history"
-
-type HistoryEntry struct {
-	Number int
-	Command string
-}
+const histFile = ".goutils_history"
 
 func main() {
-	// Определение флагов
+	add := flag.String("add", "", "добавить команду")
+	help := flag.Bool("h", false, "справка")
+	flag.Parse()
+
+	if *help {
+		fmt.Println("history - управление историей")
+		fmt.Println("  history               - показать историю")
+		fmt.Println("  history -n N          - последние N команд")
+		fmt.Println("  history -add 'cmd'    - добавить команду")
+		fmt.Println("  history -x N          - выполнить команду #N")
+		fmt.Println("  history -d N          - удалить команду #N")
+		fmt.Println("  history -c            - очистить историю")
+		return
+	}
+
+	// Если передан флаг -add
+	if *add != "" {
+		AddCommand(*add)
+		fmt.Printf("✓ Добавлено: %s\n", *add)
+		return
+	}
+
+	// Если есть аргумент без флага, считаем его командой для выполнения
+	if flag.NArg() > 0 && flag.Arg(0) != "" {
+		cmd := strings.Join(flag.Args(), " ")
+		AddCommand(cmd)
+
+		// Выполняем команду
+		parts := strings.Fields(cmd)
+		if len(parts) > 0 {
+			c := exec.Command(parts[0], parts[1:]...)
+			c.Stdin = os.Stdin
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+			c.Run()
+		}
+		return
+	}
+
+	// Обычный вывод истории
 	var (
-		help     = flag.Bool("h", false, "показать справку")
-		clear    = flag.Bool("c", false, "очистить историю")
-		delete   = flag.Int("d", 0, "удалить команду по номеру")
-		search   = flag.String("s", "", "поиск команд по подстроке")
+		clear   = flag.Bool("c", false, "")
+		delete  = flag.Int("d", 0, "")
+		execNum = flag.Int("x", 0, "")
+		last    = flag.Int("n", 0, "")
 	)
 	flag.Parse()
 
-	// Обработка справки
-	if *help {
-		fmt.Println("history - отображение истории команд")
-		fmt.Println("Использование: history [-c] [-d номер] [-s строка]")
-		fmt.Println("  -c    очистить историю")
-		fmt.Println("  -d    удалить команду по номеру")
-		fmt.Println("  -s    показать только команды, содержащие строку")
+	path := getPath()
+
+	switch {
+	case *clear:
+		os.Remove(path)
+		fmt.Println("history: очищена")
+		return
+	case *delete > 0:
+		deleteCmd(path, *delete)
+		return
+	case *execNum > 0:
+		execCmdNum(path, *execNum)
 		return
 	}
 
-	historyPath := getHistoryPath()
+	history := readHistory(path)
+	if *last > 0 && *last < len(history) {
+		history = history[len(history)-*last:]
+	}
 
-	// Очистка истории
-	if *clear {
-		if err := os.Remove(historyPath); err != nil {
-			fmt.Fprintf(os.Stderr, "history: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("history: история очищена")
+	if len(history) == 0 {
+		fmt.Println("История пуста. Добавьте команды через:")
+		fmt.Println("  history -add 'команда'")
+		fmt.Println("  или")
+		fmt.Println("  history 'команда'")
 		return
 	}
 
-	// Удаление конкретной команды
-	if *delete > 0 {
-		if err := deleteCommand(historyPath, *delete); err != nil {
-			fmt.Fprintf(os.Stderr, "history: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("history: удалена команда #%d\n", *delete)
-		return
-	}
-
-	// Чтение и отображение истории
-	history, err := readHistory(historyPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "history: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Поиск по подстроке
-	for _, entry := range history {
-		if *search == "" || strings.Contains(entry.Command, *search) {
-			fmt.Printf("%5d  %s\n", entry.Number, entry.Command)
-		}
+	for _, h := range history {
+		fmt.Printf("%6d  %s\n", h.num, h.cmd)
 	}
 }
 
-// getHistoryPath возвращает путь к файлу истории
-func getHistoryPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return historyFile
-	}
-	return filepath.Join(home, historyFile)
+type entry struct {
+	num int
+	cmd string
 }
 
-// readHistory читает историю из файла
-func readHistory(path string) ([]HistoryEntry, error) {
+func getPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, histFile)
+}
+
+func readHistory(path string) []entry {
 	file, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	defer file.Close()
 
-	var history []HistoryEntry
+	var history []entry
 	scanner := bufio.NewScanner(file)
 	num := 1
-
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			history = append(history, HistoryEntry{
-				Number:  num,
-				Command: line,
-			})
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			history = append(history, entry{num, line})
 			num++
 		}
 	}
-
-	return history, scanner.Err()
+	return history
 }
 
-// deleteCommand удаляет команду по номеру
-func deleteCommand(path string, num int) error {
-	history, err := readHistory(path)
-	if err != nil {
-		return err
-	}
-
-	if num < 1 || num > len(history) {
-		return fmt.Errorf("неверный номер команды: %d", num)
-	}
-
-	// Создаём новую историю без удалённой команды
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
+func writeHistory(path string, history []entry) {
+	file, _ := os.Create(path)
 	defer file.Close()
+	w := bufio.NewWriter(file)
+	for _, h := range history {
+		fmt.Fprintln(w, h.cmd)
+	}
+	w.Flush()
+}
 
-	writer := bufio.NewWriter(file)
-	for _, entry := range history {
-		if entry.Number != num {
-			fmt.Fprintln(writer, entry.Command)
+func deleteCmd(path string, num int) {
+	history := readHistory(path)
+	if num < 1 || num > len(history) {
+		fmt.Fprintf(os.Stderr, "history: неверный номер %d\n", num)
+		return
+	}
+	newHistory := []entry{}
+	for _, h := range history {
+		if h.num != num {
+			newHistory = append(newHistory, h)
 		}
 	}
-	writer.Flush()
+	for i := range newHistory {
+		newHistory[i].num = i + 1
+	}
+	writeHistory(path, newHistory)
+	fmt.Printf("history: удалена #%d\n", num)
+}
 
-	return nil
+func execCmdNum(path string, num int) {
+	history := readHistory(path)
+	if num < 1 || num > len(history) {
+		fmt.Fprintf(os.Stderr, "history: неверный номер %d\n", num)
+		return
+	}
+	cmd := history[num-1].cmd
+	fmt.Printf("Выполнение: %s\n", cmd)
+
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return
+	}
+
+	c := exec.Command(parts[0], parts[1:]...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	c.Run()
 }
 
 // AddCommand добавляет команду в историю
 func AddCommand(cmd string) {
-	path := getHistoryPath()
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
+	if cmd == "" {
 		return
 	}
-	defer file.Close()
-	
-	fmt.Fprintln(file, cmd)
+	path := getPath()
+	history := readHistory(path)
+
+	history = append(history, entry{len(history) + 1, cmd})
+
+	// Оставляем последние 1000
+	if len(history) > 1000 {
+		history = history[len(history)-1000:]
+	}
+
+	// Перенумерация
+	for i := range history {
+		history[i].num = i + 1
+	}
+
+	writeHistory(path, history)
 }
