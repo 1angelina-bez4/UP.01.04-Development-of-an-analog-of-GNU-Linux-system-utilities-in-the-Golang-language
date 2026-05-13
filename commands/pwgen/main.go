@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+	"strings"
+	"os"
 )
-
 const (
 	lowercase = "abcdefghijklmnopqrstuvwxyz"
 	uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -148,6 +149,3 @@ func ensureVariety(password []byte, opts PwOptions) []byte {
 	
 	return password
 }
-
-// Добавляем недостающий импорт
-import "strings"
