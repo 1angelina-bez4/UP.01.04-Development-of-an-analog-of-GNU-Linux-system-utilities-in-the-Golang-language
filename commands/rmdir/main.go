@@ -10,7 +10,7 @@ func main() {
 	// Определение флагов
 	var (
 		help       = flag.Bool("h", false, "показать справку")
-		ignore     = flag.Bool("ignore-fail-on-non-empty", false, "игнорировать ошибки для непустых директорий")
+		ignore     = flag.Bool("i", false, "игнорировать ошибки для непустых директорий")
 		parents    = flag.Bool("p", false, "удалять родительские директории")
 		verbose    = flag.Bool("v", false, "выводить сообщения")
 	)
@@ -22,7 +22,7 @@ func main() {
 		fmt.Println("Использование: rmdir [-p] [-v] директория...")
 		fmt.Println("  -p      удалять родительские директории")
 		fmt.Println("  -v      выводить подробную информацию")
-		fmt.Println("  -ignore-fail-on-non-empty  игнорировать ошибки")
+		fmt.Println("  -i  игнорировать ошибки")
 		return
 	}
 
