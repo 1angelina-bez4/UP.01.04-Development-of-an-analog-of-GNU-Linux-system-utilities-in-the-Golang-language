@@ -1,0 +1,129 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+type Config struct {
+	Help    bool
+	Version bool
+}
+
+const ver = "1.0.0"
+
+func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "!!: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
+	config := parseArgs()
+
+	if config.Help {
+		printHelp()
+		return
+	}
+
+	if config.Version {
+		printVersion()
+		return
+	}
+
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		fmt.Fprintln(os.Stderr, "!!: не задана переменная HOME")
+		os.Exit(1)
+	}
+	histFile := filepath.Join(homeDir, ".bash_history")
+
+	history := readHistoryFromFile(histFile)
+	if len(history) == 0 {
+		fmt.Fprintln(os.Stderr, "!!: история пуста")
+		os.Exit(1)
+	}
+
+	cmdLine := history[len(history)-1]
+	parts := strings.Fields(cmdLine)
+	if len(parts) == 0 {
+		fmt.Fprintln(os.Stderr, "!!: пустая команда в истории")
+		os.Exit(1)
+	}
+
+	finalArgs := append([]string{parts[0]}, os.Args[1:]...)
+
+	fmt.Printf("%s\n", strings.Join(finalArgs, " "))
+
+	c := exec.Command(finalArgs[0], finalArgs[1:]...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	if err := c.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "!!: выполнение '%s' завершилось с ошибкой: %v\n", finalArgs[0], err)
+		os.Exit(1)
+	}
+}
+
+func parseArgs() *Config {
+	config := &Config{}
+
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+
+		switch arg {
+		case "-h":
+			config.Help = true
+			return config
+		case "-v", "--version":
+			config.Version = true
+			return config
+		}
+	}
+
+	return config
+}
+
+func printHelp() {
+	fmt.Println("!! - выполнение последней команды из истории")
+	fmt.Println()
+	fmt.Println("Использование: !! [ОПЦИЯ]... [аргументы команды]")
+	fmt.Println()
+	fmt.Println("Опции:")
+	fmt.Println("  -h      показать эту справку")
+	fmt.Println("  -v, --version  показать информацию о версии")
+	fmt.Println()
+	fmt.Println("Примеры:")
+	fmt.Println("  !!                          # Выполнить последнюю команду")
+	fmt.Println("  !! -l -a                    # Последняя команда + флаги")
+}
+
+func printVersion() {
+	fmt.Println("!! версия", ver)
+	fmt.Println("Разработано в рамках учебного проекта")
+	fmt.Println("Язык программирования: Golang")
+}
+
+func readHistoryFromFile(histFile string) []string {
+	file, err := os.Open(histFile)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
