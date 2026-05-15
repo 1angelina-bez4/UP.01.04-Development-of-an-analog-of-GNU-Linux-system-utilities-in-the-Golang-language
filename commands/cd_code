@@ -1,0 +1,91 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+)
+
+var prevDirFile = "/tmp/golinux_prevdir"
+
+func main() {
+	help := flag.Bool("h", false, "справка")
+	flag.Parse()
+
+	if *help {
+		fmt.Println("cd - смена директории")
+		fmt.Println("\nИспользование: cd [путь]")
+		fmt.Println("\nСпециальные пути:")
+		fmt.Println("  -         перейти в предыдущую директорию")
+		fmt.Println("  ~         перейти в домашнюю директорию")
+		fmt.Println("\nОпции:")
+		fmt.Println("  -h        справка")
+		return
+	}
+
+	currentDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cd: ошибка: %v\n", err)
+		os.Exit(1)
+	}
+
+	prevDir := readPrevDir()
+	var targetDir string
+
+	if flag.NArg() == 0 {
+		targetDir = os.Getenv("HOME")
+		if targetDir == "" {
+			fmt.Fprintln(os.Stderr, "cd: HOME не установлена")
+			os.Exit(1)
+		}
+	} else {
+		targetDir = flag.Arg(0)
+		switch targetDir {
+		case "-":
+			if prevDir == "" {
+				fmt.Fprintln(os.Stderr, "cd: нет предыдущей директории")
+				os.Exit(1)
+			}
+			targetDir = prevDir
+			fmt.Println(targetDir)
+		case "~":
+			targetDir = os.Getenv("HOME")
+			if targetDir == "" {
+				fmt.Fprintln(os.Stderr, "cd: HOME не установлена")
+				os.Exit(1)
+			}
+		}
+	}
+
+	info, err := os.Stat(targetDir)
+	if os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "cd: %s: Нет такого файла или каталога\n", targetDir)
+		os.Exit(1)
+	}
+	if !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "cd: %s: Не является каталогом\n", targetDir)
+		os.Exit(1)
+	}
+
+	savePrevDir(currentDir)
+
+	cmd := exec.Command("bash")
+	cmd.Dir = targetDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
+}
+
+func readPrevDir() string {
+	data, err := os.ReadFile(prevDirFile)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func savePrevDir(dir string) {
+	os.WriteFile(prevDirFile, []byte(dir), 0644)
+}
