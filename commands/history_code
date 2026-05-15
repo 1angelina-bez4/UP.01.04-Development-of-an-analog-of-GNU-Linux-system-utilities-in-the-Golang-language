@@ -1,0 +1,107 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	clear := flag.Bool("c", false, "очистить историю")
+	deleteNum := flag.Int("d", 0, "удалить запись по номеру")
+	help := flag.Bool("h", false, "справка")
+	flag.Parse()
+
+	if *help {
+		fmt.Println("history - история команд из bash")
+		fmt.Println("\nИспользование: history [опции]")
+		fmt.Println("\nОпции:")
+		fmt.Println("  -c      очистить историю")
+		fmt.Println("  -d N    удалить запись N")
+		fmt.Println("  -h      справка")
+		return
+	}
+
+	historyFile := getBashHistoryFile()
+
+	if *clear {
+		os.WriteFile(historyFile, []byte(""), 0644)
+		fmt.Println("История очищена")
+		return
+	}
+
+	if *deleteNum > 0 {
+		deleteHistoryEntry(historyFile, *deleteNum)
+		return
+	}
+
+	showHistory(historyFile)
+}
+
+func getBashHistoryFile() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".bash_history")
+}
+
+func showHistory(historyFile string) {
+	file, err := os.Open(historyFile)
+	if err != nil {
+		fmt.Println("История пуста")
+		return
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	for i := 0; i < len(lines); i++ {
+		fmt.Printf("%5d  %s\n", i+1, lines[i])
+	}
+}
+
+func deleteHistoryEntry(historyFile string, num int) {
+	file, err := os.Open(historyFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "history: ошибка: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	if num < 1 || num > len(lines) {
+		fmt.Fprintf(os.Stderr, "history: запись %d не существует\n", num)
+		os.Exit(1)
+	}
+
+	newLines := append(lines[:num-1], lines[num:]...)
+
+	f, err := os.Create(historyFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "history: ошибка: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	for _, line := range newLines {
+		fmt.Fprintln(f, line)
+	}
+
+	fmt.Printf("Запись %d удалена\n", num)
+}
